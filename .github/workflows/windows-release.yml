@@ -19,12 +19,12 @@ jobs:
         id: get_version
         shell: pwsh
         run: |
-          $pkg = Get-Content package.json | ConvertFrom-Json
+          $pkg = Get-Content package.json -Raw | ConvertFrom-Json
           $version = $pkg.version
           if (-not $version) { $version = "0.0.0" }
           $installer = "oc-custom-setup-x64-$version.exe"
-          Write-Output "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-          Write-Output "installer_name=$installer" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "version=$version"
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "installer_name=$installer"
 
       - name: Ensure Bun is installed (bash)
         shell: bash
@@ -56,6 +56,7 @@ jobs:
           if [ -d "$OUTPUT_DIR" ]; then
             cp -r $OUTPUT_DIR/* installer_files/ || true
           fi
+          # 包含 bun runtime 以便安装器更自包含；如不需要可注释以下块
           if command -v bun >/dev/null 2>&1; then
             BUN_BIN=$(command -v bun)
             mkdir -p installer_files/bin
@@ -73,24 +74,27 @@ jobs:
           $version = "${{ steps.get_version.outputs.version }}"
           $app = "oc-custom"
           $installerName = "${{ steps.get_version.outputs.installer_name }}"
-          $nsi = @"
-Name "$app Installer"
-OutFile "$installerName"
-InstallDir "$PROGRAMFILES64\\$app"
+          # 使用单引号 here-string 模板并用占位符替换，避免 YAML/变量扩展冲突
+          $template = @'
+Name "{APP} Installer"
+OutFile "{INSTALLER}"
+InstallDir "$PROGRAMFILES64\{APP}"
 Page directory
 Page instfiles
 Section "Install"
   SetOutPath "$INSTDIR"
-  File /r "installer_files\\*"
-  CreateShortCut "$SMPROGRAMS\\$app.lnk" "$INSTDIR\\$app.exe"
+  File /r "installer_files\*"
+  CreateShortCut "$SMPROGRAMS\{APP}.lnk" "$INSTDIR\{APP}.exe"
 SectionEnd
-"@
-          $nsi | Out-File -FilePath installer.nsi -Encoding utf8
+'@
+          $content = $template -replace '\{APP\}', $app -replace '\{INSTALLER\}', $installerName
+          $content | Out-File -FilePath installer.nsi -Encoding utf8
 
       - name: Build installer with makensis
         shell: pwsh
         run: |
           $installerName = "${{ steps.get_version.outputs.installer_name }}"
+          # 调用 makensis 来生成安装器
           & "C:\Program Files (x86)\NSIS\makensis.exe" installer.nsi
           if (-not (Test-Path $installerName)) { Write-Error "Installer not created: $installerName" }
 
