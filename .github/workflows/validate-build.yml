@@ -1,0 +1,42 @@
+name: Validate build pipeline (quick test)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get version and installer name
+        run: |
+          if [ -f package.json ]; then
+            version=$(grep -oP '"version"\s*:\s*"\K[^"]+' package.json || echo "0.0.0")
+          else
+            version="0.0.0"
+          fi
+          installer="oc-custom-setup-x64-$version.exe"
+          echo "version=$version" >> $GITHUB_OUTPUT
+          echo "installer_name=$installer" >> $GITHUB_OUTPUT
+          echo "Detected version: $version"
+          echo "Installer name: $installer"
+
+      - name: Create simple artifact
+        run: |
+          mkdir -p out
+          echo "version=${{ steps.validate.outputs.version }}" > out/info.txt || true
+          echo "This is a test artifact." > out/README.txt
+          zip -r "artifact-${{ steps.validate.outputs.version:-0.0.0 }}.zip" out
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: validate-artifact
+          path: artifact-*.zip
