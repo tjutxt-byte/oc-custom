@@ -1,0 +1,75 @@
+name: Sync upstream anomalyco/opencode -> omo fork (daily)
+
+on:
+  schedule:
+    - cron: '0 2 * * *' # 每天 UTC 02:00 运行（可改）
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Add upstream remote and fetch
+        run: |
+          git remote add upstream https://github.com/anomalyco/opencode.git || true
+          git fetch upstream --no-tags
+
+      - name: Prepare branches
+        run: |
+          git fetch origin
+          if git show-ref --verify --quiet refs/heads/omo-custom; then
+            git checkout omo-custom
+            git reset --hard origin/omo-custom || true
+          else
+            git checkout -b omo-custom || git checkout omo-custom
+          fi
+          git checkout -B upstream-sync upstream/main
+
+      - name: Merge upstream/main into omo-custom and run tests
+        env:
+          CI: true
+        run: |
+          set -euo pipefail
+          git checkout omo-custom
+          git merge --no-ff upstream-sync -m "chore: automated merge upstream/main -> omo-custom (sync workflow)" || true
+          if command -v bun >/dev/null 2>&1; then
+            bun install
+            bun test
+          else
+            curl -fsSL https://bun.sh/install | bash
+            export BUN_INSTALL="$HOME/.bun"
+            export PATH="$BUN_INSTALL/bin:$PATH"
+            bun install
+            bun test
+          fi
+
+      - name: Push merged branch to fork (if tests passed)
+        if: success()
+        uses: ad-m/github-push-action@v0.6.0
+        with:
+          github_token: ${{ secrets.PAT_FOR_SYNC }}
+          branch: omo-custom
+          force: false
+
+      - name: Create Pull Request for upstream merge (for review)
+        if: success()
+        uses: peter-evans/create-pull-request@v5
+        with:
+          token: ${{ secrets.PAT_FOR_SYNC }}
+          commit-message: "Automated: merge upstream/main -> omo-custom (sync)"
+          branch: "auto-upstream-sync-${{ github.run_number }}"
+          base: omo-custom
+          title: "Automated upstream sync: merge upstream/main into omo-custom"
+          body: |
+            This PR was created automatically by the upstream-sync workflow.
+            It merges upstream:anomalyco/opencode@main into tjutxt-byte/oc-custom:omo-custom.
+            Tests were run using bun install && bun test; please review and merge manually.
